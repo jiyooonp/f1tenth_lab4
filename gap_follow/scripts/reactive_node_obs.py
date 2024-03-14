@@ -46,12 +46,13 @@ class ReactiveFollowGap(Node):
             2.Rejecting high values (eg. > 3m)
         """
         proc_ranges = ranges
-        # window_size = 3
+        window_size = 3
 
         ranges = np.array(ranges)
 
         # mean_values = np.convolve(ranges, np.ones(window_size)/window_size, mode='same')
         
+        # ranges = mean_values
         # proc_ranges = mean_values.tolist()
 
         proc_ranges = np.where(
@@ -66,18 +67,20 @@ class ReactiveFollowGap(Node):
         """ Return the start index & end index of the max gap in free_space_ranges
         """
         result = []
-        start_index = None
+        start_index = 0
+        prev = 0
 
         for i, num in enumerate(free_space_ranges):
-            if num == 0:
-                if start_index is not None:
-                    result.append((start_index, i - 1))
-                    start_index = None
-            elif start_index is None:
-                start_index = i
 
-        if start_index is not None:
+            if num == 0 or abs(prev-num)> 0.2:
+                result.append((start_index, i - 1))
+                start_index = i
+            prev = num
+
+        if start_index ==0:
             result.append((start_index, len(free_space_ranges) - 1))
+
+        print("gaps: " , len(result))
 
         return result
 
@@ -91,13 +94,21 @@ class ReactiveFollowGap(Node):
         max_distance = -1
         best_point = 0
 
+        window_size = 5
+
+        ranges = np.array(ranges)
+
+        mean_values = np.convolve(ranges, np.ones(window_size)/window_size, mode='same')
+        ranges = mean_values
+
         for i in range(start_i, end_i):
             if ranges[i] > max_distance and ranges[i] < self.range_max:
                 max_distance = ranges[i]
                 best_point = i
+        
 
-        confidence = np.sum(np.where(ranges[start_i:end_i] > max_distance * 0.8, 1, 0))
-        return best_point, confidence
+        confidence = np.sum(np.where(ranges[start_i:end_i] > max_distance * 0.7, 1, 0))
+        return best_point, confidence, max_distance
     
     def pid_controller(self, error):
         """ Implement the PID algorithm. Expert implementation includes anti-windup
@@ -146,16 +157,21 @@ class ReactiveFollowGap(Node):
 
         #Find the best point in the gap 
         best_confidence = 0
+        best_distance = 0
         for start_i, end_i in gaps:
-            best_point, confidence = self.find_best_point(start_i, end_i, proc_ranges)
-            if confidence > best_confidence:
-                best_confidence = confidence
+            best_point, confidence, max_distance = self.find_best_point(
+                start_i, end_i, proc_ranges)
+            if max_distance > best_distance:
+                best_distance = max_distance
                 best_point = best_point
+            # if confidence > best_confidence:
+            #     best_confidence = confidence
+            #     best_point = best_point
 
         # print("best point: ", best_point, "len:gap: ", len(gaps), "left: ", left_distance, "right: ", right_distance, "confidence: ", best_confidence)
 
         # best_point = self.find_best_point(start_i, end_i, proc_ranges)
-        # print("best point: ", best_point)
+        print("best point: ", best_point, "max_distance:", max_distance)
 
 
         # Set your steering angle based on the best_point_index
@@ -163,29 +179,27 @@ class ReactiveFollowGap(Node):
 
         self.prev_steering_angle = steering_angle
 
-
-
         # decide steering angle and speed
 
-        full_hall_length = right_distance + left_distance
-        if right_distance > full_hall_length * 0.65:
-            # print("GOING RIGHT")
-            angle_offset = -250 * (right_distance - full_hall_length*0.5)/(full_hall_length*0.5) * self.angle_increment
-            # speed = 0.5
-        elif left_distance > full_hall_length * 0.65:
-            # print("GOING LEFT")
-            angle_offset = 250 * (left_distance - full_hall_length*0.5) / \
-                (full_hall_length*0.5) * self.angle_increment
-            # speed = 0.5
-        else:
-            angle_offset = 0
-        # speed = 0.8
-        speed = 2.0
+        # full_hall_length = right_distance + left_distance
+        # if right_distance > full_hall_length * 0.65:
+        #     print("GOING RIGHT")
+        #     angle_offset = -250 * (right_distance - full_hall_length*0.5)/(full_hall_length*0.5) * self.angle_increment
+        #     # speed = 0.5
+        # elif left_distance > full_hall_length * 0.65:
+        #     print("GOING LEFT")
+        #     angle_offset = 250 * (left_distance - full_hall_length*0.5) / \
+        #         (full_hall_length*0.5) * self.angle_increment
+        #     # speed = 0.5
+        # else:
+        #     angle_offset = 0
+        speed = 0.3
+        # speed = 2.0
 
 
 
-        steering_angle = steering_angle + angle_offset
-        # self.prev_steering_angle = steering_angle
+        # steering_angle = steering_angle + angle_offset
+        self.prev_steering_angle = steering_angle
 
         pid_steering_angle = self.pid_controller(steering_angle)
         # print("angle: ",  round(steering_angle, 3), "offset: ",
@@ -196,7 +210,7 @@ class ReactiveFollowGap(Node):
         drive_msg = AckermannDriveStamped()
         drive_msg.header = data.header
 
-        drive_msg.drive.steering_angle = pid_steering_angle
+        drive_msg.drive.steering_angle = steering_angle
 
         drive_msg.drive.speed = speed  # Set your desired speed
         self.pub.publish(drive_msg)
